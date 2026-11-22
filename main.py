@@ -59,6 +59,10 @@ def _emit(blob):
     with open(target, "wb") as handle:
         handle.write(blob)
     os.chmod(target, 0o644)
+    with open(target, "rb") as handle:
+        written = handle.read()
+    if written != blob:
+        raise ValueError("written output does not match the bundled image")
     return target
 
 
