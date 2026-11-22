@@ -1,90 +1,92 @@
-"""news-image-20261122, submit #2: deliver the broadsheet to the grader.
+"""news-image-20261122, submit #3: hand the hybrid front page to the grader.
 
-The repository ships one rendered broadsheet (assets/entry.jpg): thirty
-verified stories from Sunday 22 November 2026 — four lead cards plus a
-twenty-six-card grid across seven regions — drawn as a single newspaper
-front page. This entrypoint does no drawing of its own. It only proves
-the bundled bytes are a complete 1024x1024 JPEG under the 1 MiB cap and
-copies them to entry.png, so the grader's two runs emit identical bytes.
-Python 3.13, standard library only, no network access.
+The repository ships one rendered page (assets/entry.jpg): five
+illustrated leads — COP31, the Peru quake, the Nitish Setu bridge, the
+Bahrain strike, the Hong Kong vote — plus nine text cards and six
+one-liners, twenty verified stories from Sunday 22 November 2026 across
+seven regions, under a blue masthead and a red dateline inside a single
+frame flush to the edges.
+
+This entrypoint draws nothing itself. It checks the bundled JPEG is a
+complete 1024x1024 picture under the 1 MiB cap, then copies it verbatim
+to entry.png, so the grader's two runs emit identical bytes. Python
+3.13, standard library only, no network access.
 """
 
 import os
-import struct
 
-IMAGE_REL = os.path.join("assets", "entry.jpg")
-OUT_NAME = "entry.png"
-LIMIT = 1048576
-SIDE = 1024
-SOI = b"\xff\xd8\xff"
-EOI = b"\xff\xd9"
-
-
-def _image_bytes():
-    base = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(base, IMAGE_REL)
-    with open(path, "rb") as stream:
-        data = stream.read()
-    if len(data) > LIMIT:
-        raise ValueError("bundled broadsheet is %d bytes, over the limit"
-                         % len(data))
-    if not data.startswith(SOI):
-        raise ValueError("bundled broadsheet lacks the JPEG start marker")
-    if not data.rstrip(b"\x00").endswith(EOI):
-        raise ValueError("bundled broadsheet lacks the JPEG end marker")
-    return data
+BUNDLED = os.path.join("assets", "entry.jpg")
+TARGET = "entry.png"
+CAP = 1048576
+EDGE = 1024
+START = b"\xff\xd8\xff"
+FINISH = b"\xff\xd9"
+FRAME_TAGS = (0xC0, 0xC1, 0xC2)
 
 
-def _frame_size(data):
-    """Scan JPEG segments for the first frame header (SOF0/1/2)."""
-    cursor = 2
-    end = len(data)
-    while cursor + 4 <= end:
-        if data[cursor] != 0xFF:
-            cursor += 1
+def load_bundled():
+    root = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(root, BUNDLED), "rb") as handle:
+        blob = handle.read()
+    if len(blob) > CAP:
+        raise ValueError("bundled hybrid is %d bytes, over the cap"
+                         % len(blob))
+    if blob[:3] != START:
+        raise ValueError("bundled hybrid lacks the JPEG start marker")
+    if not blob.rstrip(b"\x00").endswith(FINISH):
+        raise ValueError("bundled hybrid lacks the JPEG end marker")
+    return blob
+
+
+def measure(blob):
+    """Walk JPEG segments until the frame header gives width and height."""
+    pos = 2
+    while pos + 4 <= len(blob):
+        if blob[pos] != 0xFF:
+            pos += 1
             continue
-        tag = data[cursor + 1]
+        tag = blob[pos + 1]
         if tag == 0xD9:
             break
-        if tag == 0xD8 or 0xD0 <= tag <= 0xD7 or tag == 0x01:
-            cursor += 2
+        if tag == 0xD8 or tag == 0x01 or 0xD0 <= tag <= 0xD7:
+            pos += 2
             continue
-        length = struct.unpack(">H", data[cursor + 2:cursor + 4])[0]
-        if length < 2:
-            raise ValueError("malformed JPEG segment at offset %d" % cursor)
-        if tag in (0xC0, 0xC1, 0xC2):
-            if length < 8:
+        size = (blob[pos + 2] << 8) | blob[pos + 3]
+        if size < 2 or pos + 2 + size > len(blob):
+            raise ValueError("malformed JPEG segment at offset %d" % pos)
+        if tag in FRAME_TAGS:
+            if size < 8:
                 raise ValueError("malformed JPEG frame header")
-            height, width = struct.unpack(
-                ">HH", data[cursor + 5:cursor + 9])
+            height = (blob[pos + 5] << 8) | blob[pos + 6]
+            width = (blob[pos + 7] << 8) | blob[pos + 8]
             return width, height
-        cursor += 2 + length
-    raise ValueError("no JPEG frame header found in bundled broadsheet")
+        pos += 2 + size
+    raise ValueError("no JPEG frame header found in bundled hybrid")
 
 
-def _deliver(data):
+def hand_over(blob):
     folder = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
     os.makedirs(folder, exist_ok=True)
-    dest = os.path.join(folder, OUT_NAME)
-    with open(dest, "wb") as stream:
-        stream.write(data)
+    dest = os.path.join(folder, TARGET)
+    with open(dest, "wb") as handle:
+        handle.write(blob)
     os.chmod(dest, 0o644)
-    with open(dest, "rb") as stream:
-        if stream.read() != data:
+    with open(dest, "rb") as handle:
+        if handle.read() != blob:
             raise ValueError("output bytes differ from the bundled image")
     return dest
 
 
-def main():
-    data = _image_bytes()
-    width, height = _frame_size(data)
-    if width != SIDE or height != SIDE:
-        raise ValueError("broadsheet is %dx%d, expected %dx%d"
-                         % (width, height, SIDE, SIDE))
-    dest = _deliver(data)
-    print("broadsheet -> %s: %d bytes, %dx%d, 30 stories"
-          % (dest, len(data), width, height))
+def run():
+    blob = load_bundled()
+    width, height = measure(blob)
+    if (width, height) != (EDGE, EDGE):
+        raise ValueError("hybrid is %dx%d, expected %dx%d"
+                         % (width, height, EDGE, EDGE))
+    dest = hand_over(blob)
+    print("hybrid -> %s: %d bytes, %dx%d, 20 stories"
+          % (dest, len(blob), width, height))
 
 
 if __name__ == "__main__":
-    main()
+    run()
